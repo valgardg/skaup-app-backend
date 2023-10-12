@@ -51,6 +51,13 @@ class Player {
     }
 }
 
+class Guess {
+    constructor(guess){
+        this.guess = guess;
+        this.ticked = false;
+    }
+}
+
 var gameState = new GameState();
 
 io.on('connection', (socket) => {
@@ -70,27 +77,40 @@ io.on('connection', (socket) => {
     });
 
     socket.on('submit-guess', (data) => {
-        if(gameState.phase === "WatchPhase" || gameState.players.find(player => player.name === data.name).vote_status === true) {
+        if(gameState.phase != "GuessPhase" || gameState.players.find(player => player.name === data.name).vote_status === true) {
             return;
         }
         var player = gameState.players.find(player => player.name === data.name);
-        player.addGuess(data.guess);
+        var newGuess = new Guess(data.guess);
+        player.addGuess(newGuess);
         console.log('Received guess from client: ', data);
         io.emit('game-state', gameState);
     });
 
     socket.on('delete-guess', (data) => {
-        if(gameState.phase === "WatchPhase" || gameState.players.find(player => player.name === data.name).vote_status === true) {
+        if(gameState.phase != "GuessPhase" || gameState.players.find(player => player.name === data.name).vote_status === true) {
             return;
         }
         var player = gameState.players.find(player => player.name === data.name);
-        player.guesses = player.guesses.filter(guess => guess !== data.guess);
+        player.guesses = player.guesses.filter(guessObject => guessObject.guess !== data.guess);
         console.log('Removing guess from client: ', data);
         io.emit('game-state', gameState);
     });
 
+    socket.on('tick-guess', (data) => {
+        if(gameState.phase != "WatchPhase") {
+            return;
+        }
+        var player = gameState.players.find(player => player.name === data.name);
+        var guess = player.guesses.find(guessObject => guessObject.guess === data.guess);
+        guess.ticked = !guess.ticked;
+        console.log('Ticking guess from client: ', data);
+        io.emit('game-state', gameState);
+    });
+
     socket.on("player-ready", (data) => {
-        if(gameState.phase === "WatchPhase") {
+        console.log("player ready, game phase: " + gameState.phase);
+        if(gameState.phase !== "GuessPhase") {
             return;
         }
         var player = gameState.players.find(player => player.name === data.name);
@@ -102,7 +122,7 @@ io.on('connection', (socket) => {
     });
 
     socket.on("player-unready", (data) => {
-        if(gameState.phase === "WatchPhase") {
+        if(gameState.phase !== "GuessPhase") {
             return;
         }
         var player = gameState.players.find(player => player.name === data.name);
@@ -121,6 +141,12 @@ io.on('connection', (socket) => {
         console.log('Resetting game');
         gameState = new GameState();
         io.emit('game-state', gameState);
+    });
+
+    socket.on('end-watch-phase', () => {
+        console.log('Ending watch phase');
+        gameState.phase = "ReviewPhase";
+        io.emit('game-state', gameState); 
     });
 });
 
