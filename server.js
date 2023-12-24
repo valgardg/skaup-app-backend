@@ -4,6 +4,7 @@ const http = require('http');
 const socketIo = require('socket.io');
 const cors = require('cors');
 const app = express();
+const { assignReviewPlayers } = require('./assignReviews.js');
 // Add this to allow CORS
 const allowedOrigins = [
     "http://localhost:3000",
@@ -44,9 +45,11 @@ class Player {
         this.color = color;
         this.guesses = [];
         this.vote_status = false;
+        this.reviewed = false;
     }
 
     addGuess(guess) {
+        guess.owner = this.name;
         this.guesses.push(guess);
     }
 }
@@ -55,6 +58,8 @@ class Guess {
     constructor(guess){
         this.guess = guess;
         this.ticked = false;
+        this.accepted = false;
+        this.owner;
     }
 }
 
@@ -102,6 +107,9 @@ io.on('connection', (socket) => {
             return;
         }
         var player = gameState.players.find(player => player.name === data.name);
+        if(player.socketId !== socket.id) {
+            return;
+        }
         var guess = player.guesses.find(guessObject => guessObject.guess === data.guess);
         guess.ticked = !guess.ticked;
         console.log('Ticking guess from client: ', data);
@@ -143,10 +151,49 @@ io.on('connection', (socket) => {
         io.emit('game-state', gameState);
     });
 
+    socket.on('fetch-review-info', (data) => {
+        console.log("fetch review info called");
+        var reviewInfo = assignReviewPlayers(gameState.players);
+        console.log(reviewInfo);
+        io.emit('review-info', reviewInfo);
+    });
+
+    socket.on('accept-guess', (data) => {
+        if(gameState.phase != "ReviewPhase"){
+            return;
+        }
+        var player = gameState.players.find(player => player.name === data.guess.owner);
+        var guess = player.guesses.find(guessObject => guessObject.guess === data.guess.guess);
+        guess.accepted = !guess.accepted;
+        io.emit('game-state', gameState);
+    });
+
+    socket.on("player-reviewed", (data) => {
+        if(gameState.phase != "ReviewPhase"){
+            return;
+        }
+        var player = gameState.players.find(player => player.name === data.name);
+        player.reviewed = true;
+        if(gameState.players.every(player => player.reviewed === true)) {
+            // gameState.phase = "GuessPhase";
+            // gameState.players.forEach(player => {
+            //     player.reviewed = false;
+            //     player.vote_status = false;
+            //     player.guesses = [];
+            // });
+            gameState.phase = "ResultPhase";
+        }
+        console.log(player.name + " has been reviewed");
+        io.emit('game-state', gameState);
+    });
+
     socket.on('end-watch-phase', () => {
         console.log('Ending watch phase');
         gameState.phase = "ReviewPhase";
-        io.emit('game-state', gameState); 
+        io.emit('game-state', gameState);
+        var reviewInfo = assignReviewPlayers(gameState.players);
+        console.log(reviewInfo);
+        io.emit('review-info', reviewInfo); 
     });
 });
 
