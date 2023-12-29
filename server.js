@@ -1,10 +1,20 @@
 // server.js
 const express = require('express');
+const mongoose = require('mongoose')
 const http = require('http');
 const socketIo = require('socket.io');
 const cors = require('cors');
-const app = express();
+// local libraries
 const { assignReviewPlayers } = require('./assignReviews.js');
+
+require("dotenv").config();
+
+const connectionString = process.env.DB_CONNECTION_STRING
+const port = process.env.PORT;
+
+const app = express();
+
+// MIDDLEWARE
 // Add this to allow CORS
 const allowedOrigins = [
     "http://localhost:3000",
@@ -21,6 +31,13 @@ app.use(cors({
       return callback(null, true);
     }
   }));
+app.use(express.json());
+
+// Connect to MongoDB
+mongoose.connect(connectionString)
+  .then(() => console.log('MongoDB connected...'))
+  .catch(err => console.log(err));
+
 const server = http.createServer(app);
 const io = socketIo(server, {
     cors: {
@@ -31,37 +48,9 @@ const io = socketIo(server, {
     }
 });
 
-class GameState {
-    constructor() {
-        this.players = [];
-        this.phase = "GuessPhase";
-    }
-}
-
-class Player {
-    constructor(socketId, name, color) {
-        this.socketId = socketId;
-        this.name = name;
-        this.color = color;
-        this.guesses = [];
-        this.vote_status = false;
-        this.reviewed = false;
-    }
-
-    addGuess(guess) {
-        guess.owner = this.name;
-        this.guesses.push(guess);
-    }
-}
-
-class Guess {
-    constructor(guess){
-        this.guess = guess;
-        this.ticked = false;
-        this.accepted = false;
-        this.owner;
-    }
-}
+const GameState = require('./models/GameState.js');
+const Player = require('./models/Player.js');
+const Guess = require('./models/Guess.js');
 
 var gameState = new GameState();
 
@@ -69,27 +58,39 @@ io.on('connection', (socket) => {
     console.log('User connected');
     console.log(socket.id);
 
-    socket.on('fetch-game', (data) => {
-        console.log("game state fetched");
-        io.emit('game-state', gameState);
+    socket.on('join-game', async (data) => {
+        let gameState = await GameState.findOne({lobbyName: data.lobbyName});
+        const newPlayer = new Player({socketId: socket.id, name: data.name, color: data.color});
+        const savedPlayer = await newPlayer.save();
+        if(gameState){
+            console.log("lobby exists!");
+            gameState.players.push(savedPlayer._id);
+        }else{
+            console.log("lobby CREATED!");
+            gameState = new GameState({lobbyName: data.lobbyName, players: [savedPlayer._id], lobbyOwner: savedPlayer._id});
+        }
+        await gameState.save();
+        console.log(gameState);
+        // set socket attributes
+        socket.lobbyName = data.lobbyName;
+        socket.userName = data.name;
+        // join room and emit
+        socket.join(socket.lobbyName);
+        const populatedGameState = await GameState.findOne({ _id: gameState._id }).populate('players');
+        io.to(socket.lobbyName).emit('game-state', populatedGameState);
     });
 
-
-    socket.on('join-game', (data) => {
-        var newPlayer = new Player(socket.id, data.name, data.color);
-        gameState.players.push(newPlayer);
-        io.emit('game-state', gameState);
-    });
-
-    socket.on('submit-guess', (data) => {
+    socket.on('submit-guess', async (data) => {
+        let gameState = await GameState.findOne({lobbyName: socket.lobbyName});
         if(gameState.phase != "GuessPhase" || gameState.players.find(player => player.name === data.name).vote_status === true) {
             return;
         }
         var player = gameState.players.find(player => player.name === data.name);
         var newGuess = new Guess(data.guess);
         player.addGuess(newGuess);
+
         console.log('Received guess from client: ', data);
-        io.emit('game-state', gameState);
+        io.to(data.lobbyName).emit('game-state', gameState);
     });
 
     socket.on('delete-guess', (data) => {
@@ -138,11 +139,14 @@ io.on('connection', (socket) => {
         io.emit('game-state', gameState);
     });
 
-    socket.on('disconnect', () => {
+    socket.on('disconnect', async () => {
+        // let gameState = await GameState.findOne({lobbyName: socket.lobbyName});
+        // gameState.players = gameState.players.filter(player => player.socketId !== socket.id);
+        // await gameState.save();
         console.log('User disconnected');
         console.log(socket.id);
-        gameState.players = gameState.players.filter(player => player.socketId !== socket.id);
-        io.emit("game-state", gameState);
+
+        // io.to(socket.lobbyName).emit("game-state", gameState);
     });
 
     socket.on('reset-game', () => {
@@ -175,12 +179,6 @@ io.on('connection', (socket) => {
         var player = gameState.players.find(player => player.name === data.name);
         player.reviewed = true;
         if(gameState.players.every(player => player.reviewed === true)) {
-            // gameState.phase = "GuessPhase";
-            // gameState.players.forEach(player => {
-            //     player.reviewed = false;
-            //     player.vote_status = false;
-            //     player.guesses = [];
-            // });
             gameState.phase = "ResultPhase";
         }
         console.log(player.name + " has been reviewed");
@@ -198,6 +196,6 @@ io.on('connection', (socket) => {
 });
 
 // server.listen(3001, '0.0.0.0', () => { // used for local network testing
-server.listen(3001, () => {
-  console.log('Server listening on port 3001');
+server.listen(process.env.PORT, () => {
+  console.log(`Server is running on port ${port}`);
 });
