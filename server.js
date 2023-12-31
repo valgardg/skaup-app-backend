@@ -36,8 +36,6 @@ const GameState = require('./models/GameState.js');
 const Player = require('./models/Player.js');
 const Guess = require('./models/Guess.js');
 
-var gameState = new GameState();
-
 io.on('connection', (socket) => {
     console.log('User connected');
     console.log(socket.id);
