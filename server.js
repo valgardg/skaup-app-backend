@@ -157,37 +157,42 @@ io.on('connection', (socket) => {
 
     // done
     socket.on('tick-guess', async (data) => {
-        let gameState = await GameState.findOne({ lobbyName: socket.lobbyName });
-        if(gameState.phase != "WatchPhase") {
-            return;
-        }
-        
-        var player = await Player.findOne({ name: data.name }).populate('guesses');
+        try{
 
-        if(player.name !== socket.userName) {
-            return;
-        }
-
-        var guess = player.guesses.find(guessObject => guessObject.guess === data.guess);
-        guess.ticked = !guess.ticked;
-        await guess.save();
-
-        const populatedGameState = await GameState.findOne({ _id: gameState._id })
-        .populate({
-            path: 'players',
-            populate: {
-                path: 'guesses',
-                model: 'Guess',
-                populate: {
-                    path: 'owner',
-                    model: 'Player',
-                    select: 'name' // Add other fields you need from the Player model
-                }
+            let gameState = await GameState.findOne({ lobbyName: socket.lobbyName });
+            if(gameState.phase != "WatchPhase") {
+                return;
             }
-        });
-
-        io.to(socket.lobbyName).emit('game-state', populatedGameState);
-        console.log('Ticking guess from client: ', data);
+            
+            var player = await Player.findOne({ name: data.name }).populate('guesses');
+            
+            if(player.name !== socket.userName) {
+                return;
+            }
+            
+            var guess = player.guesses.find(guessObject => guessObject.guess === data.guess);
+            guess.ticked = !guess.ticked;
+            await guess.save();
+            
+            const populatedGameState = await GameState.findOne({ _id: gameState._id })
+            .populate({
+                path: 'players',
+                populate: {
+                    path: 'guesses',
+                    model: 'Guess',
+                    populate: {
+                        path: 'owner',
+                        model: 'Player',
+                        select: 'name' // Add other fields you need from the Player model
+                    }
+                }
+            });
+            
+            io.to(socket.lobbyName).emit('game-state', populatedGameState);
+            console.log('Ticking guess from client: ', data);
+        }catch(err){
+            console.log("error ticking guess", err);
+        };
     });
 
     // done
