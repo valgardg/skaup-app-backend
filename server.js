@@ -54,7 +54,7 @@ io.on('connection', (socket) => {
             }
         }else{
             console.log("lobby CREATED!");
-            gameState = new GameState({lobbyName: data.lobbyName, players: [savedPlayer._id], lobbyOwner: savedPlayer._id});
+            gameState = new GameState({lobbyName: data.lobbyName, players: [existingPlayer._id], lobbyOwner: existingPlayer._id});
         }
         await gameState.save();
         console.log(gameState);
