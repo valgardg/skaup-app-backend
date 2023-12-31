@@ -58,6 +58,7 @@ io.on('connection', (socket) => {
     console.log('User connected');
     console.log(socket.id);
 
+    // done
     socket.on('join-game', async (data) => {
         let gameState = await GameState.findOne({lobbyName: data.lobbyName});
         const newPlayer = new Player({socketId: socket.id, name: data.name, color: data.color});
@@ -76,69 +77,209 @@ io.on('connection', (socket) => {
         socket.userName = data.name;
         // join room and emit
         socket.join(socket.lobbyName);
-        const populatedGameState = await GameState.findOne({ _id: gameState._id }).populate('players');
+
+        const populatedGameState = await GameState.findOne({ _id: gameState._id })
+        .populate({
+            path: 'players',
+            populate: {
+                path: 'guesses',
+                model: 'Guess',
+                populate: {
+                    path: 'owner',
+                    model: 'Player',
+                    select: 'name' // Add other fields you need from the Player model
+                }
+            }
+        });
+
         io.to(socket.lobbyName).emit('game-state', populatedGameState);
     });
 
+    // done
     socket.on('submit-guess', async (data) => {
-        let gameState = await GameState.findOne({lobbyName: socket.lobbyName});
-        if(gameState.phase != "GuessPhase" || gameState.players.find(player => player.name === data.name).vote_status === true) {
+        let gameState = await GameState.findOne({lobbyName: socket.lobbyName}).populate('players');
+        
+        if (gameState.phase != "GuessPhase") {
             return;
         }
-        var player = gameState.players.find(player => player.name === data.name);
-        var newGuess = new Guess(data.guess);
-        player.addGuess(newGuess);
 
+        var player = gameState.players.find(player => player.name === data.name);
+        
+        if (!player || player.vote_status === true) {
+            return;
+        }
+
+        var newGuess = new Guess({guess: data.guess, owner: player._id});
+        player.guesses.push(newGuess._id);
+        await newGuess.save();
+        await player.save();
+        
+        const populatedGameState = await GameState.findOne({ _id: gameState._id })
+        .populate({
+            path: 'players',
+            populate: {
+                path: 'guesses',
+                model: 'Guess',
+                populate: {
+                    path: 'owner',
+                    model: 'Player',
+                    select: 'name' // Add other fields you need from the Player model
+                }
+            }
+        });
+
+
+        io.to(socket.lobbyName).emit('game-state', populatedGameState);
         console.log('Received guess from client: ', data);
-        io.to(data.lobbyName).emit('game-state', gameState);
     });
 
-    socket.on('delete-guess', (data) => {
-        if(gameState.phase != "GuessPhase" || gameState.players.find(player => player.name === data.name).vote_status === true) {
+    // done
+    socket.on('delete-guess', async (data) => {
+        let gameState = await GameState.findOne({ lobbyName: socket.lobbyName });
+        
+        if (gameState.phase != "GuessPhase") {
             return;
         }
-        var player = gameState.players.find(player => player.name === data.name);
+
+        var player = await Player.findOne({ name: data.name }).populate('guesses');
+        
+        if (!player || player.vote_status === true) {
+            return;
+        }
+        
+        console.log('before:', player.guesses);
+        
         player.guesses = player.guesses.filter(guessObject => guessObject.guess !== data.guess);
+        
+        console.log('after:', player.guesses);
+
+        await player.save();
+
+        const populatedGameState = await GameState.findOne({ _id: gameState._id })
+        .populate({
+            path: 'players',
+            populate: {
+                path: 'guesses',
+                model: 'Guess',
+                populate: {
+                    path: 'owner',
+                    model: 'Player',
+                    select: 'name' // Add other fields you need from the Player model
+                }
+            }
+        });
+
+        io.to(socket.lobbyName).emit('game-state', populatedGameState);
         console.log('Removing guess from client: ', data);
-        io.emit('game-state', gameState);
     });
 
-    socket.on('tick-guess', (data) => {
+    // done
+    socket.on('tick-guess', async (data) => {
+        let gameState = await GameState.findOne({ lobbyName: socket.lobbyName });
         if(gameState.phase != "WatchPhase") {
             return;
         }
-        var player = gameState.players.find(player => player.name === data.name);
-        if(player.socketId !== socket.id) {
+        
+        var player = await Player.findOne({ name: data.name }).populate('guesses');
+
+        if(player.name !== socket.userName) {
             return;
         }
+
         var guess = player.guesses.find(guessObject => guessObject.guess === data.guess);
         guess.ticked = !guess.ticked;
+        await guess.save();
+
+        const populatedGameState = await GameState.findOne({ _id: gameState._id })
+        .populate({
+            path: 'players',
+            populate: {
+                path: 'guesses',
+                model: 'Guess',
+                populate: {
+                    path: 'owner',
+                    model: 'Player',
+                    select: 'name' // Add other fields you need from the Player model
+                }
+            }
+        });
+
+        io.to(socket.lobbyName).emit('game-state', populatedGameState);
         console.log('Ticking guess from client: ', data);
-        io.emit('game-state', gameState);
     });
 
-    socket.on("player-ready", (data) => {
-        console.log("player ready, game phase: " + gameState.phase);
+    // done
+    socket.on("player-ready", async (data) => {
+        let gameState = await GameState.findOne({ lobbyName: socket.lobbyName });
         if(gameState.phase !== "GuessPhase") {
             return;
         }
-        var player = gameState.players.find(player => player.name === data.name);
+
+        var player = await Player.findOne({ name: data.name }).populate('guesses');
+        
         player.vote_status = true;
+        await player.save();
+
+        // check if everyone is ready for watch phase
+        gameState = await GameState.findOne({ lobbyName: socket.lobbyName }).populate('players');
+
         if(gameState.players.every(player => player.vote_status === true)) {
             gameState.phase = "WatchPhase";
+            await gameState.save();
+        }else{
+            console.log("not everyone is ready");
+            console.log(gameState.players);
         }
-        io.emit('game-state', gameState);
+        
+        // emit game state
+        const populatedGameState = await GameState.findOne({ _id: gameState._id })
+        .populate({
+            path: 'players',
+            populate: {
+                path: 'guesses',
+                model: 'Guess',
+                populate: {
+                    path: 'owner',
+                    model: 'Player',
+                    select: 'name' // Add other fields you need from the Player model
+                }
+            }
+        });
+
+        io.to(socket.lobbyName).emit('game-state', populatedGameState);
     });
 
-    socket.on("player-unready", (data) => {
+    // done
+    socket.on("player-unready", async (data) => {
+        let gameState = await GameState.findOne({ lobbyName: socket.lobbyName });
         if(gameState.phase !== "GuessPhase") {
             return;
         }
-        var player = gameState.players.find(player => player.name === data.name);
-        player.vote_status = false;
-        io.emit('game-state', gameState);
+
+        var player = await Player.findOne({ name: data.name }).populate('guesses');
+        
+        player.vote_status = true;
+        await player.save();
+
+        // emit game state
+        const populatedGameState = await GameState.findOne({ _id: gameState._id })
+        .populate({
+            path: 'players',
+            populate: {
+                path: 'guesses',
+                model: 'Guess',
+                populate: {
+                    path: 'owner',
+                    model: 'Player',
+                    select: 'name' // Add other fields you need from the Player model
+                }
+            }
+        });
+
+        io.to(socket.lobbyName).emit('game-state', populatedGameState);
     });
 
+    // FOR LATER ALLIGATOR
     socket.on('disconnect', async () => {
         // let gameState = await GameState.findOne({lobbyName: socket.lobbyName});
         // gameState.players = gameState.players.filter(player => player.socketId !== socket.id);
@@ -146,52 +287,130 @@ io.on('connection', (socket) => {
         console.log('User disconnected');
         console.log(socket.id);
 
-        // io.to(socket.lobbyName).emit("game-state", gameState);
+        //io.to(socket.lobbyName).emit("game-state", gameState);
     });
 
-    socket.on('reset-game', () => {
+    // done
+    socket.on('reset-game', async () => {
+        let gameState = await GameState.findOne({ lobbyName: socket.lobbyName });
         console.log('Resetting game');
-        gameState = new GameState();
-        io.emit('game-state', gameState);
+        gameState.phase = "GuessPhase";
+        gameState.players.forEach(async (player) => {
+            player.guesses = [];
+            player.vote_status = false;
+            player.reviewed = false;
+            await player.save();
+        });
+        await gameState.save();
+
+        const populatedGameState = await GameState.findOne({ _id: gameState._id })
+        .populate({
+            path: 'players',
+            populate: {
+                path: 'guesses',
+                model: 'Guess',
+                populate: {
+                    path: 'owner',
+                    model: 'Player',
+                    select: 'name' // Add other fields you need from the Player model
+                }
+            }
+        });
+
+        io.to(socket.lobbyName).emit('game-state', populatedGameState);
     });
 
-    socket.on('fetch-review-info', (data) => {
-        console.log("fetch review info called");
-        var reviewInfo = assignReviewPlayers(gameState.players);
-        console.log(reviewInfo);
-        io.emit('review-info', reviewInfo);
-    });
-
-    socket.on('accept-guess', (data) => {
+    // done
+    socket.on('accept-guess', async (data) => {
+        let gameState = await GameState.findOne({ lobbyName: socket.lobbyName }).populate('players');
         if(gameState.phase != "ReviewPhase"){
             return;
         }
-        var player = gameState.players.find(player => player.name === data.guess.owner);
+        console.log('accept-guess data:', data);
+        var player = await Player.findOne({ name: data.guess.owner.name }).populate('guesses');
         var guess = player.guesses.find(guessObject => guessObject.guess === data.guess.guess);
         guess.accepted = !guess.accepted;
-        io.emit('game-state', gameState);
+        await guess.save();
+
+        const populatedGameState = await GameState.findOne({ _id: gameState._id })
+        .populate({
+            path: 'players',
+            populate: {
+                path: 'guesses',
+                model: 'Guess',
+                populate: {
+                    path: 'owner',
+                    model: 'Player',
+                    select: 'name' // Add other fields you need from the Player model
+                }
+            }
+        });
+
+        io.to(socket.lobbyName).emit('game-state', populatedGameState);
     });
 
-    socket.on("player-reviewed", (data) => {
+    // done
+    socket.on("player-reviewed", async (data) => {
+        let gameState = await GameState.findOne({ lobbyName: socket.lobbyName }).populate('players');
         if(gameState.phase != "ReviewPhase"){
             return;
         }
-        var player = gameState.players.find(player => player.name === data.name);
+
+        var player = await Player.findOne({ name: data.name }).populate('guesses');
         player.reviewed = true;
-        if(gameState.players.every(player => player.reviewed === true)) {
+        await player.save();
+
+        var updatedGameState = await GameState.findOne({ lobbyName: socket.lobbyName }).populate('players');
+        
+        if(updatedGameState.players.every(player => player.reviewed === true)) {
             gameState.phase = "ResultPhase";
         }
+        await gameState.save();
         console.log(player.name + " has been reviewed");
-        io.emit('game-state', gameState);
+
+        const populatedGameState = await GameState.findOne({ _id: gameState._id })
+        .populate({
+            path: 'players',
+            populate: {
+                path: 'guesses',
+                model: 'Guess',
+                populate: {
+                    path: 'owner',
+                    model: 'Player',
+                    select: 'name' // Add other fields you need from the Player model
+                }
+            }
+        });
+
+        io.to(socket.lobbyName).emit('game-state', populatedGameState);
     });
 
-    socket.on('end-watch-phase', () => {
+    // done
+    socket.on('end-watch-phase', async () => {
+        let gameState = await GameState.findOne({ lobbyName: socket.lobbyName });
         console.log('Ending watch phase');
         gameState.phase = "ReviewPhase";
-        io.emit('game-state', gameState);
-        var reviewInfo = assignReviewPlayers(gameState.players);
+        await gameState.save();
+        
+        const populatedGameState = await GameState.findOne({ _id: gameState._id })
+        .populate({
+            path: 'players',
+            populate: {
+                path: 'guesses',
+                model: 'Guess',
+                populate: {
+                    path: 'owner',
+                    model: 'Player',
+                    select: 'name' // Add other fields you need from the Player model
+                }
+            }
+        });
+
+        io.to(socket.lobbyName).emit('game-state', populatedGameState);
+
+        var reviewInfo = assignReviewPlayers(populatedGameState.players);
         console.log(reviewInfo);
-        io.emit('review-info', reviewInfo); 
+        io.to(socket.lobbyName).emit('review-info', reviewInfo); 
     });
 });
 
