@@ -197,47 +197,54 @@ io.on('connection', (socket) => {
 
     // done
     socket.on("player-ready", async (data) => {
-        let gameState = await GameState.findOne({ lobbyName: socket.lobbyName });
-        if(gameState.phase !== "GuessPhase") {
-            return;
-        }
+        try{
 
-        var player = await Player.findOne({ name: data.name }).populate('guesses');
-        
-        player.vote_status = true;
-        await player.save();
-
-        // check if everyone is ready for watch phase
-        gameState = await GameState.findOne({ lobbyName: socket.lobbyName }).populate('players');
-
-        if(gameState.players.every(player => player.vote_status === true)) {
-            gameState.phase = "WatchPhase";
-            await gameState.save();
-        }else{
-            console.log("not everyone is ready");
-            console.log(gameState.players);
-        }
-        
-        // emit game state
-        const populatedGameState = await GameState.findOne({ _id: gameState._id })
-        .populate({
-            path: 'players',
-            populate: {
-                path: 'guesses',
-                model: 'Guess',
-                populate: {
-                    path: 'owner',
-                    model: 'Player',
-                    select: 'name' // Add other fields you need from the Player model
-                }
+            let gameState = await GameState.findOne({ lobbyName: socket.lobbyName });
+            if(gameState.phase !== "GuessPhase") {
+                return;
             }
-        });
-
-        io.to(socket.lobbyName).emit('game-state', populatedGameState);
+            
+            var player = await Player.findOne({ name: data.name }).populate('guesses');
+            
+            player.vote_status = true;
+            await player.save();
+            
+            // check if everyone is ready for watch phase
+            gameState = await GameState.findOne({ lobbyName: socket.lobbyName }).populate('players');
+            
+            if(gameState.players.every(player => player.vote_status === true)) {
+                gameState.phase = "WatchPhase";
+                await gameState.save();
+            }else{
+                console.log("not everyone is ready");
+                console.log(gameState.players);
+            }
+            
+            // emit game state
+            const populatedGameState = await GameState.findOne({ _id: gameState._id })
+            .populate({
+                path: 'players',
+                populate: {
+                    path: 'guesses',
+                    model: 'Guess',
+                    populate: {
+                        path: 'owner',
+                        model: 'Player',
+                        select: 'name' // Add other fields you need from the Player model
+                    }
+                }
+            });
+            
+            io.to(socket.lobbyName).emit('game-state', populatedGameState);
+        }
+        catch(err){
+            console.log("error ticking guess", err);
+        };
     });
 
     // done
     socket.on("player-unready", async (data) => {
+        try{
         let gameState = await GameState.findOne({ lobbyName: socket.lobbyName });
         if(gameState.phase !== "GuessPhase") {
             return;
@@ -264,6 +271,9 @@ io.on('connection', (socket) => {
         });
 
         io.to(socket.lobbyName).emit('game-state', populatedGameState);
+        }catch(err){
+            console.log("error ticking guess", err);
+        }
     });
 
     // FOR LATER ALLIGATOR
@@ -309,6 +319,7 @@ io.on('connection', (socket) => {
 
     // done
     socket.on('accept-guess', async (data) => {
+        try{
         let gameState = await GameState.findOne({ lobbyName: socket.lobbyName }).populate('players');
         if(gameState.phase != "ReviewPhase"){
             return;
@@ -334,10 +345,14 @@ io.on('connection', (socket) => {
         });
 
         io.to(socket.lobbyName).emit('game-state', populatedGameState);
+    }catch(err){
+        console.log("error ticking guess", err);
+    }
     });
 
     // done
     socket.on("player-reviewed", async (data) => {
+        try{
         let gameState = await GameState.findOne({ lobbyName: socket.lobbyName }).populate('players');
         if(gameState.phase != "ReviewPhase"){
             return;
@@ -370,10 +385,14 @@ io.on('connection', (socket) => {
         });
 
         io.to(socket.lobbyName).emit('game-state', populatedGameState);
+    }catch(err){
+        console.log("error ticking guess", err);
+    }
     });
 
     // done
     socket.on('end-watch-phase', async () => {
+        try{
         let gameState = await GameState.findOne({ lobbyName: socket.lobbyName });
         console.log('Ending watch phase');
         gameState.phase = "ReviewPhase";
@@ -398,6 +417,9 @@ io.on('connection', (socket) => {
         var reviewInfo = assignReviewPlayers(populatedGameState.players);
         console.log(reviewInfo);
         io.to(socket.lobbyName).emit('review-info', reviewInfo); 
+    }catch(err){
+        console.log("error ticking guess", err);
+    }
     });
 });
 
