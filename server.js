@@ -85,9 +85,9 @@ io.on('connection', (socket) => {
     socket.on('submit-guess', async (data) => {
         let gameState = await GameState.findOne({lobbyName: socket.lobbyName}).populate('players');
         
-        if (gameState.phase != "GuessPhase") {
-            return;
-        }
+        // if (gameState.phase != "GuessPhase") {
+        //     return;
+        // }
 
         var player = gameState.players.find(player => player.name === data.name);
         
