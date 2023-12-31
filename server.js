@@ -43,11 +43,15 @@ io.on('connection', (socket) => {
     // done
     socket.on('join-game', async (data) => {
         let gameState = await GameState.findOne({lobbyName: data.lobbyName});
-        const newPlayer = new Player({socketId: socket.id, name: data.name, color: data.color});
-        const savedPlayer = await newPlayer.save();
+        var existingPlayer = await Player.findOne({name: data.name});
+        
         if(gameState){
             console.log("lobby exists!");
-            gameState.players.push(savedPlayer._id);
+            if(existingPlayer == null){
+                const newPlayer = new Player({socketId: socket.id, name: data.name, color: data.color});
+                const savedPlayer = await newPlayer.save();
+                gameState.players.push(savedPlayer._id);
+            }
         }else{
             console.log("lobby CREATED!");
             gameState = new GameState({lobbyName: data.lobbyName, players: [savedPlayer._id], lobbyOwner: savedPlayer._id});
